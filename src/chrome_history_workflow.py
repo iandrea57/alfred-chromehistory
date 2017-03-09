@@ -8,6 +8,7 @@ Author: iandrea57
 Host: https://github.com/iandrea57
 '''
 
+import itertools
 import sqlite3
 import datetime
 import cgi
@@ -129,24 +130,72 @@ def print_history_list(history_list):
         workflow_xml = '<?xml version="1.0"?><items>'
         for history in history_list:
             workflow_xml += str(history)
-        workflow_xml += '/<items>'
+        workflow_xml += '</items>'
         print workflow_xml
 
 
-def query(keyword):
+def split_keywords(keywords, title_param_max_count):
     '''
-    query chrome history list with keyword and print result
+    split keywords for param ${title}, ${url}
     '''
-    like_string = '%' + keyword + '%'
+    dim_keywords = []
+    for i in range(title_param_max_count+1):
+        for split_tuple in itertools.combinations(keywords, i):
+            dim_keywords.append([split_tuple, tuple(set(keywords).difference(set(split_tuple)))])
+    if DEBUG_MODE:
+        print 'dim_keywords:', dim_keywords
+    return dim_keywords
+
+
+def query_from_db(conn, keywords):
+    '''
+    query chrome history list from sqlite3 by keywords
+    '''
+    like_keywords = []
+    for keyword in keywords:
+        like_keywords.append('%' + keyword + '%')
+    dim_keywords = split_keywords(like_keywords, 2)
+    flat_keywords = []
+    sql = 'select id, url, title, visit_count, last_visit_time from urls where '
+    for i in range(len(dim_keywords)):
+        if i > 0:
+            sql += ' or '
+        sub_sql = ''
+        title_keywords = dim_keywords[i][0]
+        url_keywords = dim_keywords[i][1]
+        flat_keywords += title_keywords + url_keywords
+        if len(title_keywords) > 0:
+            for url_keyword in title_keywords:
+                if sub_sql != '':
+                    sub_sql += ' and '
+                sub_sql += 'title like ?'
+        if len(url_keywords) > 0:
+            for url_keyword in url_keywords:
+                if sub_sql != '':
+                    sub_sql += ' and '
+                sub_sql += 'url like ?'
+        sql += sub_sql
+    sql += ' order by visit_count desc, last_visit_time desc, id desc limit 50'
+    result = fetchall(conn, sql, tuple(flat_keywords))
+    return result
+    
+
+def query(content):
+    '''
+    query chrome history list by content and print result
+    '''
+    keywords = content.split()
+    if DEBUG_MODE:
+        print 'keywords:', keywords
     path = backup_db(HISTORY_DB_PATH)
     conn = get_conn(path)
-    result = fetchall(conn, 'select id, url, title, visit_count, last_visit_time from urls where url like ? or title like ? order by visit_count desc, last_visit_time desc, id desc limit 50', (like_string, like_string))
+    result = query_from_db(conn, keywords)
     history_list = build_history_list(result)
     print_history_list(history_list)
 
 
 if __name__ == '__main__':
     if DEBUG_MODE:
-        query(u'wiki')
+        query(u'dev bee')
     else:
         query(u'{query}')
